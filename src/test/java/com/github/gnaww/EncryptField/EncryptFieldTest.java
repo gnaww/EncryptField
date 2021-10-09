@@ -105,29 +105,43 @@ public class EncryptFieldTest {
     @Test
     public void withSchema() {
         final Map<String, String> props = new HashMap<>();
-        props.put("include", "secret");
+        props.put("include", "after, secret");
 
         xform.configure(props);
+
+        final Schema nestedSchema = SchemaBuilder.struct()
+                .field("test", Schema.STRING_SCHEMA)
+                .field("id", Schema.INT32_SCHEMA)
+                .build();
 
         final Schema schema = SchemaBuilder.struct()
                 .field("customer", Schema.STRING_SCHEMA)
                 .field("secret", Schema.STRING_SCHEMA)
+                .field("after", nestedSchema)
                 .build();
+
+        final Struct nestedStruct = new Struct(nestedSchema);
+        nestedStruct.put("test", "foobar");
+        nestedStruct.put("id", 3);
 
         final Struct value = new Struct(schema);
         value.put("customer", "hello1");
         value.put("secret", "world1");
+        value.put("after", nestedStruct);
+
 
         final SourceRecord record = new SourceRecord(Collections.emptyMap(), Collections.emptyMap(), "test", null, null, schema, value);
         final SourceRecord transformedRecord = xform.apply(record);
 
         final Struct updatedValue = (Struct) transformedRecord.value();
+        System.out.println(updatedValue);
 
         // expect customer name to be the same
         assertEquals("hello1", updatedValue.getString("customer"));
         // expect customer secret to be encrypted from plaintext string
         assertNotEquals("world1", updatedValue.getString("secret"));
         String decryptedSecret = "";
+        String decryptedNestedSecret = "";
         try {
             Connection conn = DriverManager.getConnection(dbURL, dbUser, dbPassword);
             conn.setAutoCommit(false);
@@ -141,10 +155,13 @@ public class EncryptFieldTest {
             stmt.close();
             conn.close();
             decryptedSecret = EncryptField.decrypt(updatedValue.getString("secret"), ivSpec);
+            Struct after = (Struct) updatedValue.get("after");
+            decryptedNestedSecret = EncryptField.decrypt(after.getString("test"), ivSpec);
         } catch (Exception err) {
             err.printStackTrace();
         }
         assertEquals(decryptedSecret, "world1");
+        assertEquals(decryptedNestedSecret, "foobar");
     }
 
 //    public static void main(String[] args) {

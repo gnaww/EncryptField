@@ -51,7 +51,15 @@ public abstract class EncryptField<R extends ConnectRecord<R>> implements Transf
         }
     }
 
-    public record InitVector(int id, IvParameterSpec ivSpec) {}
+    private static class InitVector {
+        public int id;
+        public IvParameterSpec ivSpec;
+
+        public InitVector(int id, IvParameterSpec ivSpec) {
+            this.id = id;
+            this.ivSpec = ivSpec;
+        }
+    }
 
     public static InitVector generateIv() {
         byte[] iv = new byte[16];
@@ -215,20 +223,33 @@ public abstract class EncryptField<R extends ConnectRecord<R>> implements Transf
                 IvParameterSpec ivSpec;
                 if (!updatedValue.containsKey("ivId")) {
                     InitVector iv = generateIv();
-                    ivSpec = iv.ivSpec();
-                    int ivId = iv.id();
+                    ivSpec = iv.ivSpec;
+                    int ivId = iv.id;
                     updatedValue.put("ivId", ivId);
                 } else {
                     ivSpec = getIvSpec((int) updatedValue.get("ivId"));
                 }
 
-                String encryptedFieldValue = "";
                 try {
-                    encryptedFieldValue = encrypt((String) e.getValue(), ivSpec);
+                    if (e.getValue() instanceof String) {
+                        String encryptedFieldValue = encrypt((String) e.getValue(), ivSpec);
+                        updatedValue.put(fieldName, encryptedFieldValue);
+                    } else if (e.getValue() instanceof Struct) {
+                        Struct valueStruct = (Struct) e.getValue();
+                        for (Field field : valueStruct.schema().fields()) {
+                            Object fieldValue = valueStruct.get(field.name());
+                            if (fieldValue instanceof String) {
+                                String encryptedFieldValue = encrypt((String) fieldValue, ivSpec);
+                                valueStruct.put(field.name(), encryptedFieldValue);
+                            }
+                        }
+                        updatedValue.put(fieldName, valueStruct);
+                    } else {
+                        System.out.println("unexpected type, neither struct nor string");
+                    }
                 } catch (Exception err) {
                     err.printStackTrace();
                 }
-                updatedValue.put(fieldName, encryptedFieldValue);
             } else {
                 updatedValue.put(fieldName, e.getValue());
             }
@@ -259,23 +280,35 @@ public abstract class EncryptField<R extends ConnectRecord<R>> implements Transf
                 IvParameterSpec ivSpec = null;
 
                 try {
-                    int ivId = value.getInt32("ivId");
+                    int ivId = updatedValue.getInt32("ivId");
                     ivSpec = getIvSpec(ivId);
                 } catch (Exception e) {
                     InitVector iv = generateIv();
-                    ivSpec = iv.ivSpec();
-                    int ivId = iv.id();
+                    ivSpec = iv.ivSpec;
+                    int ivId = iv.id;
                     updatedValue.put("ivId", ivId);
                 }
 
-                String encryptedFieldValue = "";
                 try {
-                    encryptedFieldValue = encrypt((String) fieldValue, ivSpec);
+                    if (fieldValue instanceof String) {
+                        String encryptedFieldValue = encrypt((String) fieldValue, ivSpec);
+                        updatedValue.put(field.name(), encryptedFieldValue);
+                    } else if (fieldValue instanceof Struct) {
+                        Struct innerStruct = (Struct) fieldValue;
+                        for (Field innerField : innerStruct.schema().fields()) {
+                            Object innerFieldValue = innerStruct.get(innerField.name());
+                            if (innerFieldValue instanceof String) {
+                                String encryptedFieldValue = encrypt((String) innerFieldValue, ivSpec);
+                                innerStruct.put(innerField.name(), encryptedFieldValue);
+                            }
+                        }
+                        updatedValue.put(field.name(), innerStruct);
+                    } else {
+                        System.out.println("unexpected type, neither struct nor string");
+                    }
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
-
-                updatedValue.put(field.name(), encryptedFieldValue);
             } else {
                 updatedValue.put(field.name(), fieldValue);
             }
